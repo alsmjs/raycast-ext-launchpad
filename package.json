@@ -5,6 +5,9 @@
   "description": "Browse and launch installed macOS applications in a grid view — a Launchpad replacement for macOS 26 Tahoe.",
   "icon": "icon.png",
   "author": "ALs",
+  "platforms": [
+    "macOS"
+  ],
   "license": "MIT",
   "categories": [
     "Productivity"

@@ -1,0 +1,15 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+raycast-env.d.ts
+
+# Test output
+coverage
+
+# Logs
+*.log
+
+# macOS
+.DS_Store

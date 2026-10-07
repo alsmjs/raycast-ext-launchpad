@@ -159,6 +159,14 @@ describe("launch overrides", () => {
     expect(off.launchOverrides["app"]).toEqual({ injectSystemProxy: false, env: { FOO: "1" } });
   });
 
+  // The UI keys the toggle on `injectSystemProxy`, not on "any override", so for
+  // an env-only app the first press must turn the proxy ON and keep the env.
+  it("turns the proxy on for an app that only has custom env", () => {
+    const envOnly = setLaunchOverride(base(), "app", { env: { FOO: "1" } });
+    const on = toggleSystemProxyInjection(envOnly, "app");
+    expect(on.launchOverrides["app"]).toEqual({ env: { FOO: "1" }, injectSystemProxy: true });
+  });
+
   it("treats an all-empty override as removal", () => {
     const config = base();
     expect(setLaunchOverride(config, "app", { injectSystemProxy: false })).toBe(config);

@@ -22,9 +22,12 @@ export function AppItem({
   mode,
   config,
   selection,
+  iconPath,
   onDone,
 }: {
   app: AppEntry;
+  /** Cached high-res PNG, when one has been extracted. */
+  iconPath: string | undefined;
   scope: Scope;
   mode: Mode;
   config: LaunchpadConfig;
@@ -35,7 +38,13 @@ export function AppItem({
   const { push } = useNavigation();
 
   const override = config.launchOverrides[app.bundleId];
+  // Two different questions. `injects` drives the 🌐 marker: will this launch
+  // carry *any* injected environment? `proxyOn` drives the toggle, which only
+  // ever controls the proxy half — keying it on `injects` would flip the label
+  // for an app that has custom env but no proxy, and pressing it would then do
+  // the opposite of what it says.
   const injects = isOverrideActive(override);
+  const proxyOn = override?.injectSystemProxy === true;
   const inFolder = scope.kind === "folder";
   const isSelected = selection.has(app.bundleId);
 
@@ -51,7 +60,10 @@ export function AppItem({
       // displays. Without this, a localized app ("密码") is unreachable by typing
       // the name printed in its own docs ("Passwords").
       keywords={app.systemName ? [app.systemName] : undefined}
-      content={{ fileIcon: app.path }}
+      // Our own extraction rather than `fileIcon`, which Raycast 2 renders too
+      // small for a grid cell. `fileIcon` remains the fallback until the PNG
+      // exists, or for an app with no .icns to extract.
+      content={iconPath ? { source: iconPath } : { fileIcon: app.path }}
       accessory={mode === "multi" && isSelected ? { icon: Icon.CheckCircle, tooltip: "Selected" } : undefined}
       actions={
         <ActionPanel>
@@ -72,11 +84,11 @@ export function AppItem({
 
               <ActionPanel.Section title="Launch">
                 <Action
-                  title={injects ? "Disable System Proxy Injection" : "Enable System Proxy Injection"}
+                  title={proxyOn ? "Disable System Proxy Injection" : "Enable System Proxy Injection"}
                   icon={Icon.Globe}
                   // ⌘P is reserved by Raycast for the search-bar dropdown.
                   shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
-                  onAction={() => toggleProxyInjection(app, injects)}
+                  onAction={() => toggleProxyInjection(app, proxyOn)}
                 />
               </ActionPanel.Section>
 
@@ -224,9 +236,10 @@ function MultiMoveActions({
 async function launch(app: AppEntry, config: LaunchpadConfig): Promise<void> {
   const override = config.launchOverrides[app.bundleId];
   const outcome = await launchApp(app, override);
+  const injectedWhat = override?.injectSystemProxy ? "system proxy" : "custom environment";
 
   if (outcome !== "already-running") {
-    await showHUD(outcome === "injected" ? `Opened ${app.name} with system proxy` : `Opened ${app.name}`);
+    await showHUD(outcome === "injected" ? `Opened ${app.name} with ${injectedWhat}` : `Opened ${app.name}`);
     return;
   }
 
@@ -251,7 +264,7 @@ async function launch(app: AppEntry, config: LaunchpadConfig): Promise<void> {
           toast.message = "Quit it manually, then open it again";
         } else {
           toast.hide();
-          await showHUD(`Opened ${app.name} with system proxy`);
+          await showHUD(`Opened ${app.name} with ${injectedWhat}`);
         }
       },
     },

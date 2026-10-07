@@ -1,10 +1,11 @@
 import { getApplications } from "@raycast/api";
-import { readdirSync, statSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { appScanSignature, DirSnapshot } from "../core/appScan";
+import { parseDisplayNames } from "../core/displayNames";
 import { dedupeInstalled, InstalledApp } from "../core/sync";
-import { BIN, run, timed } from "./proc";
+import { BIN, runKeepingPartialOutput, timed } from "./proc";
 
 /**
  * The directories the change fingerprint watches. Not exhaustive by design —
@@ -50,24 +51,22 @@ export function currentScanSignature(): string {
  * preferring the cheaper-but-wrong source pointless in the first place.
  */
 function resolveDisplayNames(paths: string[]): Map<string, string> {
-  const names = new Map<string, string>();
-  if (paths.length === 0) return names;
-
-  const raw = run(BIN.mdls, ["-name", "kMDItemDisplayName", ...paths]);
-  if (!raw) return names;
-
-  // mdls prints exactly one line per path, in the order given.
-  const lines = raw.trim().split("\n");
-  paths.forEach((path, i) => {
-    const match = lines[i]?.match(/kMDItemDisplayName = "(.+?)(?:\.app)?"\s*$/);
-    if (match) names.set(path, match[1]);
-  });
-  return names;
+  if (paths.length === 0) return new Map();
+  // Lenient: a single path vanishing mid-batch must not cost every other name.
+  const raw = runKeepingPartialOutput(BIN.mdls, ["-name", "kMDItemDisplayName", ...paths]);
+  return raw ? parseDisplayNames(raw, paths) : new Map();
 }
 
 export async function listInstalled(): Promise<InstalledApp[]> {
   const applications = await timed("getApplications", () => getApplications());
-  const installed = applications.filter((a) => a.bundleId);
+
+  // LaunchServices keeps registrations long after the bundle is gone — apps in
+  // the Trash, half-finished installers, superseded self-updates all linger. A
+  // bundle that isn't on disk isn't installed, can't be launched, and would
+  // abort the `mdls` batch below. Filtering *before* dedupe also matters: if a
+  // stale path were listed first for a bundleId, dedupe would keep it and drop
+  // the real copy.
+  const installed = applications.filter((a) => a.bundleId && existsSync(a.path));
 
   const displayNames = await timed(`mdls display names (${installed.length} apps)`, async () =>
     resolveDisplayNames(installed.map((a) => a.path)),

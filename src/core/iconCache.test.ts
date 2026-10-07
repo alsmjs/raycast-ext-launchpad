@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { folderIconKey, iconSourcePaths, MAX_ICON_CELLS } from "./iconCache";
+import { appIconKey, folderIconKey, iconSourcePaths, MAX_ICON_CELLS } from "./iconCache";
 
 const paths = (n: number) => Array.from({ length: n }, (_, i) => `/Applications/App${i}.app`);
 
@@ -28,5 +28,23 @@ describe("folderIconKey", () => {
 
   it("ignores apps beyond the ninth", () => {
     expect(folderIconKey("f1", paths(9))).toBe(folderIconKey("f1", [...paths(9), "/Applications/Extra.app"]));
+  });
+});
+
+describe("appIconKey", () => {
+  const path = "/Applications/Discord.app";
+
+  it("is stable for the same bundle and the same Info.plist", () => {
+    expect(appIconKey(path, 1000)).toBe(appIconKey(path, 1000));
+  });
+
+  // An app update rewrites Info.plist, so a changed icon gets a new key and is
+  // re-extracted rather than served stale.
+  it("changes when the app is updated", () => {
+    expect(appIconKey(path, 1000)).not.toBe(appIconKey(path, 2000));
+  });
+
+  it("differs between apps", () => {
+    expect(appIconKey(path, 1000)).not.toBe(appIconKey("/Applications/Safari.app", 1000));
   });
 });

@@ -15,7 +15,7 @@ import { useSelection } from "./useSelection";
  */
 export function FolderGrid({ folderId, mode }: { folderId: string; mode: Mode }) {
   const { pop } = useNavigation();
-  const { config } = useLaunchpad();
+  const { config, appIcons } = useLaunchpad();
   const selection = useSelection(folderId);
   const [selectedItemId, setSelectedItemId] = useState<string | undefined>();
 
@@ -51,6 +51,7 @@ export function FolderGrid({ folderId, mode }: { folderId: string; mode: Mode })
           <AppItem
             key={app.bundleId}
             app={app}
+            iconPath={appIcons[app.path]}
             scope={scope}
             mode={mode}
             config={config}

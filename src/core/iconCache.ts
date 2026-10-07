@@ -27,3 +27,36 @@ export function folderIconKey(folderId: string, appPaths: string[]): string {
     .update(`${ICON_CACHE_VERSION}:${folderId}${iconSourcePaths(appPaths).join("|")}`)
     .digest("hex");
 }
+
+// ── App icons ──────────────────────────────────────────────────────────────
+
+/**
+ * Pixel width of a cached app icon.
+ *
+ * Raycast 2 renders `{ fileIcon }` at a resolution too low for a grid cell —
+ * visibly blurry next to the same icon extracted from its `.icns` — so app
+ * icons are extracted and cached by us instead. 256 is above 1:1 for a grid
+ * cell on a Retina display; 512 extracts just as fast but costs ~4× the decoded
+ * memory on Raycast's side (100 apps × 512² × RGBA ≈ 100 MB vs ≈ 26 MB). If 256
+ * ever reads soft, raise it — the size is part of the cache key.
+ */
+export const APP_ICON_SIZE = 256;
+
+/** Bump to invalidate every cached app icon, e.g. after changing the size. */
+export const APP_ICON_CACHE_VERSION = "v1";
+
+/**
+ * Cache key for one app's icon.
+ *
+ * Keyed on the bundle path plus `Info.plist`'s mtime rather than on the icon
+ * file: finding the icon file means asking `plutil`, a subprocess, whereas the
+ * mtime is a single `stat` — cheap enough to check for every app on every
+ * launch. An app update that changes the icon rewrites `Info.plist`, so the
+ * key moves with it.
+ */
+export function appIconKey(appPath: string, infoPlistMtimeMs: number): string {
+  return crypto
+    .createHash("md5")
+    .update(`${APP_ICON_CACHE_VERSION}:${APP_ICON_SIZE}:${appPath}:${infoPlistMtimeMs}`)
+    .digest("hex");
+}

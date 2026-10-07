@@ -4,7 +4,7 @@ Deferred work and thin spots in verification. Read this when picking up new work
 on the extension; it is deliberately **not** in `CLAUDE.md`, which is
 auto-loaded every session and reserved for rules that constrain edits.
 
-Last reviewed: 2026-09-10.
+Last reviewed: 2026-10-07 (after the move to Raycast 2).
 
 ## Deliberately deferred features
 
@@ -26,6 +26,16 @@ oversights. Reopen only if the need actually shows up.
 
 Not known to be broken — just never exercised, so treat with suspicion if
 something looks wrong nearby.
+
+- **The load-error screen and its Try Again action.** Only reachable when a
+  first run can't read the installed apps (`getApplications()` or LocalStorage
+  throwing), which didn't happen during development. The logic is small, but
+  the screen itself has never been rendered.
+- **Whether `getApplications()` actually returns stale paths.** LaunchServices
+  on the dev machine holds registrations for apps in `~/.Trash` and superseded
+  self-updates, and `mdls` provably aborts on such a path. Whether Raycast's
+  `getApplications()` passes them through or filters them itself is unknown —
+  the existence check in `listInstalled` makes the answer not matter.
 
 - **First-run import, live in the extension.** `services/launchpadDb.ts` →
   `core/dbRows.ts` has only ever run via unit tests and via `sqlite3` by hand.

@@ -21,7 +21,7 @@
     }
   ],
   "dependencies": {
-    "@raycast/api": "2.2.1",
+    "@raycast/api": "2.6.3",
     "pngjs": "^7.0.0"
   },
   "devDependencies": {

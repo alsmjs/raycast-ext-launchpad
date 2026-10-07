@@ -26,6 +26,8 @@ npm test         # vitest, src/core only
 
 `npm run dev` requires Raycast to be running. It imports the extension into Raycast and enables hot-reload. Errors surface in Raycast's developer overlay.
 
+**Keep `@raycast/api` in step with the Raycast app.** The CLI inside that package is what builds and registers a dev extension. After the move to the Raycast 2 desktop app the extension stopped working on the 2.2.1 package; upgrading to match the app (2.6.3) and re-running `npm run dev` brought it back with no source changes. The isolation isn't airtight — 2.2.1 still compiled cleanly, and its build was never launched by deeplink before the upgrade — but if the extension breaks after a Raycast update, matching the versions is the first thing to try.
+
 ## Performance & Interaction Contract
 
 This is the tie-breaker for every design decision here. It is a deliberate set of trade-offs, not a wish list.
@@ -53,9 +55,11 @@ src/
     migrate.ts             any stored blob → current schema
     dbRows.ts              Launchpad DB row parsing + import layout
     proxy.ts               `scutil --proxy` parsing
+    displayNames.ts        `mdls` output parsing (positional, abort-aware)
     appScan.ts             installed-apps fingerprint
-    iconCache.ts           folder-icon cache keys
+    iconCache.ts           folder-composite and app-icon cache keys
     composite.ts           3×3 pixel compositor
+    concurrency.ts         mapLimit — bounded parallelism for subprocess batches
     id.ts                  crypto.randomUUID wrapper
 
   services/                side-effect boundary; one external dependency per file
@@ -63,6 +67,8 @@ src/
     storage.ts             LocalStorage
     applications.ts        getApplications + localizedName + mdls fallback + fingerprint
     launchpadDb.ts         locate and query the system Launchpad DB
+    icns.ts                .icns → PNG via plutil + sips (shared by both icon caches)
+    appIcon.ts             per-app high-res icons + disk cache (replaces fileIcon)
     folderIcon.ts          composite build + disk cache in supportPath
     launcher.ts            open / open --env / lsappinfo
 
@@ -126,6 +132,8 @@ LaunchOverride { injectSystemProxy?, env? }
 `Application.localizedName` looks like a free replacement for shelling out to `mdls`. It is not. Measured on a zh-Hans system with 101 apps: it was populated for 74 of them, and **64 of 101 disagreed with `kMDItemDisplayName`** — usually by returning the English bundle name. Preferring it silently dropped Chinese names for most of the grid.
 
 `kMDItemDisplayName` is by definition what Finder and Launchpad display, so it is the source of truth and `localizedName` is only a fallback. The batch costs ~122ms for 101 apps and runs only when the directory fingerprint has moved, which is precisely what made the cheaper-but-wrong source pointless.
+
+**One missing path used to cost every name.** `mdls` given a path that doesn't exist prints an error *to stdout* at that position, stops processing the rest, and exits 1; treating the exit code as all-or-nothing dropped the whole batch and reverted the entire grid to English. LaunchServices — which `getApplications()` reads — keeps registrations for apps in the Trash, abandoned installers and superseded self-updates, so this is not hypothetical. Hence two guards: `listInstalled` drops paths that aren't on disk (before dedupe, so a stale copy can't win over the real one), and the batch runs through `runKeepingPartialOutput` + `core/displayNames.ts`, which keeps everything resolved before an abort and never assigns a name past the point where alignment is lost.
 
 `launchOverrides` is a **top-level map, not a field on `AppEntry`** — on purpose. An `AppEntry` is a projection of system state and gets filtered out when a scan doesn't return the app; an override is user intent and must survive that.
 
@@ -202,13 +210,13 @@ Every failure mode (no DB, incompatible schema, no `sqlite3`) falls back to a fl
 Each of these looks like an oversight and is not. Most are pinned by a test.
 
 - **Synchronous `execFileSync` on the mutation path** (`buildFolderIconSync`). Trading throughput for interaction certainty, per the contract above.
-- **Async icon builds restricted to startup** (`iconsFilled`). Avoids repainting cells mid-edit.
+- **Async folder-composite builds restricted to startup** (`iconsFilled`). Avoids repainting cells mid-edit. (App icons are exempt — see "App icons" below.)
 - **`folderIcons` REPLACE, never merge.** Lets an emptied folder drop its stale composite.
 - **`mergeInstalled` removes nothing when the scan comes back empty.** A transient `getApplications()` failure must not wipe the user's layout.
 - **`hidden` is never filtered by installed-ness.** `getApplications()` omits some system apps; filtering would make them vanish with no way to unhide.
 - **`launchOverrides` is never garbage-collected** for uninstalled apps. Same reasoning: user intent, not system state.
 - **`import crypto from "crypto"`** (see `core/id.ts`). Raycast's bundler does not polyfill a global `crypto`.
-- **No concurrency cap on first-paint icon builds.** All 84 apps on the dev machine resolve their `.icns`; no hitch has been observed.
+- **No concurrency cap on first-paint folder composites** (at most nine `sips` per folder, a handful of folders). App icons are a different scale — a hundred bundles — and are capped at 8.
 - **`Grid.Inset.Zero` and `composite.PAD` are a pair.** The grid uses no inset so app icons line up with their titles; `inset` is grid-wide, so the folder composite gets its equivalent margin baked into the PNG instead. Reintroducing a grid inset would double the folder's padding; dropping `PAD` would make folders full-bleed and visibly heavier than the app icons beside them. Change one and you must change the other — and bump `ICON_CACHE_VERSION`.
 - **`columns={8}` hardcoded**, no `preferences` mechanism.
 - **`⌘R` is Rename, not Refresh.** Raycast suggests `Common.Refresh` for `⌘R`; rename predates it here and is used far more often. Rescan takes `⌘⇧R`. There is a targeted eslint-disable with this reason.
@@ -219,7 +227,27 @@ Everything shells out through `run` / `runAsync`: array arguments (no shell), a 
 
 **Always use `BIN.*`, never a bare command name.** Raycast's extension process does **not** have `/usr/sbin` on its PATH. `execFileSync("scutil", …)` fails with ENOENT there, and combined with failure-as-null that surfaced as "no system proxy is configured" while Surge was plainly running — a wrong answer, not an error. Every other tool we call happens to live in `/usr/bin` and worked by luck.
 
+`runKeepingPartialOutput` is the exception to all-or-nothing: for batch tools that fail part-way (see `mdls` above), it returns whatever reached stdout before a non-zero exit.
+
 `run`/`runAsync` log the failure reason when `environment.isDevelopment`. That is what makes an ENOENT distinguishable from a legitimately empty result; without it the bug above needed inference rather than a glance at the log.
+
+## Raycast 2 Runtime
+
+- Commands run as worker threads inside the shared **Raycast Backend** process. Each launch still gets a **fresh module instance** (verified with a probe: `started` was `false` on every launch, same pid), so module-level state in `store.ts` is per-session, as it always was.
+- The upgrade moved the old app's data into `~/Library/Application Support/.com.raycast.macos.backups/v1/`. LocalStorage (the layout) was migrated; `supportPath` contents were not, so folder composites rebuilt once on first launch. Expected, and covered by the cache-rebuild clause of the contract.
+- **`{ fileIcon }` renders blurry in a grid cell.** Verified side by side: the same app via `fileIcon` vs a PNG extracted from its `.icns` — the former visibly soft, the latter sharp. Hence `services/appIcon.ts` (below). Raycast's own root search shows icons too small to tell.
+- Otherwise no API used here changed behaviour in 2.x. The common shortcuts re-bound in 2.0 (`CopyName`, `CopyPath`, `Pin`, `MoveUp/Down`) are not used.
+
+### App icons (`services/appIcon.ts`)
+
+Every app cell renders `{ source: <our PNG> }`, falling back to `fileIcon` only until the PNG exists or for an app with no `.icns`.
+
+- **Size 256.** Confirmed sharp by eye on the dev machine's Retina display. 512 extracts equally fast but costs ~4× the decoded memory on Raycast's side (~100 MB vs ~26 MB for 100 apps). Raise `APP_ICON_SIZE` if it ever reads soft; it is part of the cache key.
+- **Keyed on bundle path + `Info.plist` mtime**, so a lookup is one `stat` and never a subprocess, and an app update re-extracts automatically.
+- **Looked up at startup and after a sync only.** `mutate` never touches `appIcons` — moving an app doesn't change its icon.
+- **Built off the hot path**, 8 at a time (`mapLimit`), tmp-then-rename so a killed run can't leave a truncated PNG that `existsSync` accepts forever. Measured: 103 icons from cold in ~480 ms; an already-warm launch spends ~2 ms here.
+- **Negative cache for structural misses only.** An app with no `.icns` gets a `.none` marker so it isn't retried (and a `plutil` spawned) on every launch. A *conversion* failure is not remembered — one bad moment under load must not pin a normal app to the blurry fallback until its next update. `icns.ts` returns `"ok" | "no-icns" | "failed"` precisely so callers can tell these apart.
+- Unlike folder composites, filling app icons after startup is fine: it only swaps a placeholder for the sharp version of the same icon, so nothing moves under the user.
 
 ## Known Platform Limits
 

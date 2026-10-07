@@ -2,7 +2,7 @@ import { Action, ActionPanel, Grid, Icon } from "@raycast/api";
 import { useState } from "react";
 import { unhideAll } from "../core/mutations";
 import { Scope } from "../core/types";
-import { mutate, useLaunchpad } from "../store";
+import { mutate, retryLaunchpad, useLaunchpad } from "../store";
 import { AppItem } from "./AppItem";
 import { FolderItem } from "./FolderItem";
 import { GlobalActions } from "./GlobalActions";
@@ -12,11 +12,27 @@ import { useSelection } from "./useSelection";
 const TOP_LEVEL: Scope = { kind: "uncategorized" };
 
 export function TopGrid() {
-  const { config, folderIcons, isSyncing } = useLaunchpad();
+  const { config, folderIcons, appIcons, isSyncing, loadError } = useLaunchpad();
   const [mode, setMode] = useState<Mode>("app");
   const selection = useSelection("uncategorized");
   const [selectedItemId, setSelectedItemId] = useState<string | undefined>();
 
+  if (loadError) {
+    return (
+      <Grid>
+        <Grid.EmptyView
+          icon={Icon.ExclamationMark}
+          title="Couldn't load your applications"
+          description={loadError}
+          actions={
+            <ActionPanel>
+              <Action title="Try Again" icon={Icon.ArrowClockwise} onAction={retryLaunchpad} />
+            </ActionPanel>
+          }
+        />
+      </Grid>
+    );
+  }
   if (!config) return <Grid isLoading />;
 
   const isMulti = mode === "multi";
@@ -65,6 +81,7 @@ export function TopGrid() {
               folder={folder}
               mode={mode}
               iconPath={folderIcons[folder.id]}
+              firstAppIconPath={folder.apps[0] && appIcons[folder.apps[0].path]}
               // Entering a folder in Multi-Move moves the selection scope with it.
               onOpen={selection.clear}
             />
@@ -78,6 +95,7 @@ export function TopGrid() {
             <AppItem
               key={app.bundleId}
               app={app}
+              iconPath={appIcons[app.path]}
               scope={TOP_LEVEL}
               mode={mode}
               config={config}

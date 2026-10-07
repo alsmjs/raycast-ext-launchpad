@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { CELL, compositeCells } from "../core/composite";
 import { folderIconKey, iconSourcePaths } from "../core/iconCache";
-import { BIN, run, runAsync } from "./proc";
+import { icnsToPng, icnsToPngSync } from "./icns";
 
 /**
  * Composite folder icons, built on demand and cached on disk.
@@ -44,49 +44,16 @@ export function cachedFolderIcon(folderId: string, appPaths: string[]): string |
   return existsSync(path) ? path : null;
 }
 
-// ── Icon extraction ────────────────────────────────────────────────────────
-
-/** Resolve the .icns inside an app bundle. Not every app has one. */
-function icnsFor(appPath: string, iconFile: string | null): string | null {
-  const name = iconFile?.trim();
-  if (!name) return null;
-  const file = name.endsWith(".icns") ? name : `${name}.icns`;
-  const full = join(appPath, "Contents/Resources", file);
-  return existsSync(full) ? full : null;
-}
-
-const PLUTIL_ARGS = (appPath: string) => [
-  "-extract",
-  "CFBundleIconFile",
-  "raw",
-  "-o",
-  "-",
-  join(appPath, "Contents/Info.plist"),
-];
-
-const SIPS_ARGS = (icns: string, out: string) => [
-  "-s",
-  "format",
-  "png",
-  icns,
-  "--out",
-  out,
-  "--resampleWidth",
-  String(CELL),
-];
+// ── Cell extraction ────────────────────────────────────────────────────────
 
 function tempPng(): string {
   return join(tmpdir(), `lp_icon_${crypto.randomUUID()}.png`);
 }
 
 function cellSync(appPath: string): Buffer | null {
-  const icns = icnsFor(appPath, run(BIN.plutil, PLUTIL_ARGS(appPath)));
-  if (!icns) return null;
-
   const out = tempPng();
   try {
-    if (run(BIN.sips, SIPS_ARGS(icns, out)) === null) return null;
-    return readFileSync(out);
+    return icnsToPngSync(appPath, CELL, out) === "ok" ? readFileSync(out) : null;
   } catch {
     return null;
   } finally {
@@ -99,13 +66,9 @@ function cellSync(appPath: string): Buffer | null {
 }
 
 async function cellAsync(appPath: string): Promise<Buffer | null> {
-  const icns = icnsFor(appPath, await runAsync(BIN.plutil, PLUTIL_ARGS(appPath)));
-  if (!icns) return null;
-
   const out = tempPng();
   try {
-    if ((await runAsync(BIN.sips, SIPS_ARGS(icns, out))) === null) return null;
-    return await readFile(out);
+    return (await icnsToPng(appPath, CELL, out)) === "ok" ? await readFile(out) : null;
   } catch {
     return null;
   } finally {

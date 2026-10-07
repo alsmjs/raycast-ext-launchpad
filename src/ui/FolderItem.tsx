@@ -12,12 +12,15 @@ export function FolderItem({
   folder,
   mode,
   iconPath,
+  firstAppIconPath,
   onOpen,
 }: {
   folder: Folder;
   mode: Mode;
   /** Composite 3×3 PNG, when one has been built for this folder's current apps. */
   iconPath: string | undefined;
+  /** The first app's cached icon — the placeholder while the composite builds. */
+  firstAppIconPath: string | undefined;
   onOpen: () => void;
 }) {
   const { push } = useNavigation();
@@ -31,7 +34,7 @@ export function FolderItem({
     <Grid.Item
       id={folder.id}
       title={folder.name}
-      content={folderContent(folder, iconPath)}
+      content={folderContent(folder, iconPath, firstAppIconPath)}
       subtitle={pluralizeApps(folder.apps.length)}
       actions={
         <ActionPanel>
@@ -106,8 +109,13 @@ export function FolderItem({
  * Three tiers, best first: the composite, the first app's own icon while the
  * composite is still building, and a plain folder for an empty folder.
  */
-function folderContent(folder: Folder, iconPath: string | undefined): Image.ImageLike {
+function folderContent(
+  folder: Folder,
+  iconPath: string | undefined,
+  firstAppIconPath: string | undefined,
+): Image.ImageLike {
   if (iconPath) return { source: iconPath };
+  if (firstAppIconPath) return { source: firstAppIconPath };
   if (folder.apps.length > 0) return { fileIcon: folder.apps[0].path };
   return Icon.Folder;
 }

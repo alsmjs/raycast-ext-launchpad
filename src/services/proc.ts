@@ -63,6 +63,25 @@ export function run(command: BinPath, args: string[], timeout = DEFAULT_TIMEOUT_
   }
 }
 
+/**
+ * Like `run`, but a non-zero exit still returns whatever reached stdout.
+ *
+ * For batch tools that fail *part-way*. `mdls` given one missing path among a
+ * hundred prints the results it had, then the error, then exits 1 without
+ * touching the rest — so treating the exit code as all-or-nothing throws away
+ * every name it did resolve. Returns null only when there is no output at all
+ * (spawn failure, timeout before any write).
+ */
+export function runKeepingPartialOutput(command: BinPath, args: string[], timeout = DEFAULT_TIMEOUT_MS): string | null {
+  try {
+    return execFileSync(command, args, { encoding: "utf8", timeout, stdio: ["ignore", "pipe", "ignore"] });
+  } catch (error) {
+    logFailure(command, args, error);
+    const stdout = (error as { stdout?: unknown }).stdout;
+    return typeof stdout === "string" && stdout.length > 0 ? stdout : null;
+  }
+}
+
 export function runAsync(command: BinPath, args: string[], timeout = DEFAULT_TIMEOUT_MS): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(command, args, { encoding: "utf8", timeout }, (error, stdout) => {
